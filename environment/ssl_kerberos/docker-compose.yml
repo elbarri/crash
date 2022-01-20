@@ -1,0 +1,285 @@
+---
+version: '3.5'
+services:
+
+    ####
+    #
+    # This file overrides values from environment/plaintext/docker-compose.yml
+    #
+    ####
+
+  kdc:
+    hostname: kdc.kerberos-demo.local
+    build: ../../environment/ssl_kerberos/kdc
+    container_name: kdc
+    volumes:
+      - secret:/var/lib/secret
+      - ../../environment/ssl_kerberos/kdc/krb5.conf:/etc/kdc/krb5.conf
+
+  client:
+    build:
+      context: ../../environment/ssl_kerberos/client
+      args:
+        TAG: ${TAG}
+    container_name: client
+    hostname: client.kerberos-demo.local
+    depends_on:
+      - broker
+      - kdc
+    volumes:
+      - secret:/var/lib/secret
+      - ../../environment/ssl_kerberos/kdc/krb5.conf:/etc/krb5.conf
+      - ../../environment/ssl_kerberos/security:/etc/kafka/secrets
+
+  zookeeper:
+    hostname: zookeeper.kerberos-demo.local
+    depends_on:
+      - kdc
+    # Required to wait for the keytab to get generated
+    restart: on-failure
+    volumes:
+      - secret:/var/lib/secret
+      - ../../environment/ssl_kerberos/kdc/krb5.conf:/etc/krb5.conf
+      - ../../environment/ssl_kerberos/zookeeper/zookeeper.sasl.jaas.config:/etc/kafka/zookeeper.sasl.jaas.config
+    environment:
+      KAFKA_OPTS: -Djava.security.auth.login.config=/etc/kafka/zookeeper.sasl.jaas.config
+        -Djava.security.krb5.conf=/etc/krb5.conf
+        -Dzookeeper.authProvider.1=org.apache.zookeeper.server.auth.SASLAuthenticationProvider
+        -Dsun.security.krb5.debug=true
+        -Dzookeeper.allowSaslFailedClients=false
+        -Dzookeeper.requireClientAuthScheme=sasl
+        # -Djdk.security.allowNonCaAnchor=true
+        # -Dsun.security.krb5.disableReferrals=true
+
+  broker:
+    hostname: broker.kerberos-demo.local
+    depends_on:
+      - zookeeper
+      - kdc
+    # Required to wait for the keytab to get generated
+    restart: on-failure
+    volumes:
+      - secret:/var/lib/secret
+      - ../../environment/ssl_kerberos/kdc/krb5.conf:/etc/krb5.conf
+      - ../../environment/ssl_kerberos/kafka/broker.sasl.jaas.config:/etc/kafka/broker.sasl.jaas.config
+      - ../../environment/ssl_kerberos/security:/etc/kafka/secrets
+    environment:
+      KAFKA_ZOOKEEPER_CONNECT: 'zookeeper.kerberos-demo.local:2181'
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: SASL_SSL:SASL_SSL
+      KAFKA_LISTENERS: SASL_SSL://:9092
+      KAFKA_ADVERTISED_LISTENERS: SASL_SSL://broker.kerberos-demo.local:9092
+      # Kerberos / GSSAPI Authentication mechanism
+      KAFKA_SASL_ENABLED_MECHANISMS: GSSAPI
+      KAFKA_SASL_KERBEROS_SERVICE_NAME: kafka
+      # Configure replication to require Kerberos:
+      KAFKA_SASL_MECHANISM_INTER_BROKER_PROTOCOL: GSSAPI
+      # Authorization config:
+      KAFKA_AUTHORIZER_CLASS_NAME: $KAFKA_AUTHORIZER_CLASS_NAME
+      KAFKA_ZOOKEEPER_SET_ACL: "true"
+      KAFKA_ALLOW_EVERYONE_IF_NO_ACL_FOUND: "false"
+      KAFKA_SUPER_USERS: User:admin;User:kafka;User:schemaregistry;User:connect;User:controlcenter;User:ksqldb
+      KAFKA_OPTS: -Djava.security.auth.login.config=/etc/kafka/broker.sasl.jaas.config
+                  # -Djdk.security.allowNonCaAnchor=true
+                  # -Dsun.security.krb5.disableReferrals=true
+      # SSL Additions
+      CONFLUENT_METRICS_REPORTER_SSL_TRUSTSTORE_LOCATION: /etc/kafka/secrets/kafka.client.truststore.jks
+      CONFLUENT_METRICS_REPORTER_SSL_TRUSTSTORE_PASSWORD: confluent
+      CONFLUENT_METRICS_REPORTER_SSL_KEYSTORE_LOCATION: /etc/kafka/secrets/kafka.client.keystore.jks
+      CONFLUENT_METRICS_REPORTER_SSL_KEYSTORE_PASSWORD: confluent
+      CONFLUENT_METRICS_REPORTER_SSL_KEY_PASSWORD: confluent
+      # SSL Additions
+      KAFKA_INTER_BROKER_LISTENER_NAME: SASL_SSL
+      KAFKA_SSL_CLIENT_AUTH: "required"
+      KAFKA_SSL_KEYSTORE_FILENAME: kafka.broker.keystore.jks
+      KAFKA_SSL_KEYSTORE_CREDENTIALS: broker_keystore_creds
+      KAFKA_SSL_KEY_CREDENTIALS: broker_sslkey_creds
+      KAFKA_SSL_TRUSTSTORE_FILENAME: kafka.broker.truststore.jks
+      KAFKA_SSL_TRUSTSTORE_CREDENTIALS: broker_truststore_creds
+      # Metrics reporter
+      CONFLUENT_METRICS_REPORTER_SASL_MECHANISM: GSSAPI
+      CONFLUENT_METRICS_REPORTER_SECURITY_PROTOCOL: SASL_SSL
+      CONFLUENT_METRICS_REPORTER_SASL_KERBEROS_SERVICE_NAME: kafka
+      CONFLUENT_METRICS_REPORTER_SASL_JAAS_CONFIG: "com.sun.security.auth.module.Krb5LoginModule required \
+        useKeyTab=true \
+        storeKey=true \
+        keyTab=\"/var/lib/secret/kafka-admin.key\" \
+        principal=\"admin/for-kafka@TEST.CONFLUENT.IO\";"
+
+  connect:
+    volumes:
+      - secret:/var/lib/secret
+      - ../../environment/ssl_kerberos/kdc/krb5.conf:/etc/krb5.conf
+      - ../../environment/ssl_kerberos/security:/etc/kafka/secrets
+    # Required to wait for the keytab to get generated
+    restart: on-failure
+    environment:
+      # Configure the Connect workers to use SASL/GSSAPI.
+      CONNECT_SASL_MECHANISM: GSSAPI
+      CONNECT_SASL_KERBEROS_SERVICE_NAME: kafka
+      CONNECT_SECURITY_PROTOCOL: SASL_SSL
+      # SSL Additions
+      CONNECT_SSL_TRUSTSTORE_LOCATION: /etc/kafka/secrets/kafka.connect.truststore.jks
+      CONNECT_SSL_TRUSTSTORE_PASSWORD: confluent
+      CONNECT_SSL_KEYSTORE_LOCATION: /etc/kafka/secrets/kafka.connect.keystore.jks
+      CONNECT_SSL_KEYSTORE_PASSWORD: confluent
+      # JAAS
+      CONNECT_SASL_JAAS_CONFIG: "com.sun.security.auth.module.Krb5LoginModule required \
+        useKeyTab=true \
+        storeKey=true \
+        keyTab=\"/var/lib/secret/kafka-connect.key\" \
+        principal=\"connect@TEST.CONFLUENT.IO\";"
+      # Confluent Monitoring Interceptors for Control Center Streams Monitoring
+      # producer
+      CONNECT_CONFLUENT_MONITORING_INTERCEPTOR_SASL_KERBEROS_SERVICE_NAME: kafka
+      CONNECT_PRODUCER_INTERCEPTOR_CLASSES: "io.confluent.monitoring.clients.interceptor.MonitoringProducerInterceptor"
+      CONNECT_PRODUCER_CONFLUENT_MONITORING_INTERCEPTOR_SECURITY_PROTOCOL: SASL_SSL
+      CONNECT_PRODUCER_CONFLUENT_MONITORING_INTERCEPTOR_SASL_JAAS_CONFIG: "com.sun.security.auth.module.Krb5LoginModule required \
+        useKeyTab=true \
+        storeKey=true \
+        keyTab=\"/var/lib/secret/kafka-connect.key\" \
+        principal=\"connect@TEST.CONFLUENT.IO\";"
+      CONNECT_PRODUCER_CONFLUENT_MONITORING_INTERCEPTOR_SASL_MECHANISM: GSSAPI
+      CONNECT_PRODUCER_CONFLUENT_MONITORING_INTERCEPTOR_SASL_KERBEROS_SERVICE_NAME: kafka
+      # SSL Additions
+      CONNECT_PRODUCER_CONFLUENT_MONITORING_INTERCEPTOR_SSL_TRUSTSTORE_LOCATION: /etc/kafka/secrets/kafka.connect.truststore.jks
+      CONNECT_PRODUCER_CONFLUENT_MONITORING_INTERCEPTOR_SSL_TRUSTSTORE_PASSWORD: confluent
+      CONNECT_PRODUCER_CONFLUENT_MONITORING_INTERCEPTOR_SSL_KEYSTORE_LOCATION: /etc/kafka/secrets/kafka.connect.keystore.jks
+      CONNECT_PRODUCER_CONFLUENT_MONITORING_INTERCEPTOR_SSL_KEYSTORE_PASSWORD: confluent
+      CONNECT_PRODUCER_CONFLUENT_MONITORING_INTERCEPTOR_SSL_KEY_PASSWORD: confluent
+      # consumer
+      CONNECT_CONSUMER_INTERCEPTOR_CLASSES: "io.confluent.monitoring.clients.interceptor.MonitoringConsumerInterceptor"
+      CONNECT_CONSUMER_CONFLUENT_MONITORING_INTERCEPTOR_SECURITY_PROTOCOL: SASL_SSL
+      CONNECT_CONSUMER_CONFLUENT_MONITORING_INTERCEPTOR_SASL_JAAS_CONFIG: "com.sun.security.auth.module.Krb5LoginModule required \
+        useKeyTab=true \
+        storeKey=true \
+        keyTab=\"/var/lib/secret/kafka-connect.key\" \
+        principal=\"connect@TEST.CONFLUENT.IO\";"
+      CONNECT_CONSUMER_CONFLUENT_MONITORING_INTERCEPTOR_SASL_MECHANISM: GSSAPI
+      CONNECT_CONSUMER_CONFLUENT_MONITORING_INTERCEPTOR_SASL_KERBEROS_SERVICE_NAME: kafka
+      # SSL Additions
+      CONNECT_CONSUMER_CONFLUENT_MONITORING_INTERCEPTOR_SSL_TRUSTSTORE_LOCATION: /etc/kafka/secrets/kafka.connect.truststore.jks
+      CONNECT_CONSUMER_CONFLUENT_MONITORING_INTERCEPTOR_SSL_TRUSTSTORE_PASSWORD: confluent
+      CONNECT_CONSUMER_CONFLUENT_MONITORING_INTERCEPTOR_SSL_KEYSTORE_LOCATION: /etc/kafka/secrets/kafka.connect.keystore.jks
+      CONNECT_CONSUMER_CONFLUENT_MONITORING_INTERCEPTOR_SSL_KEYSTORE_PASSWORD: confluent
+      CONNECT_CONSUMER_CONFLUENT_MONITORING_INTERCEPTOR_SSL_KEY_PASSWORD: confluent
+      # producer
+      CONNECT_PRODUCER_SASL_MECHANISM: GSSAPI
+      CONNECT_PRODUCER_SASL_KERBEROS_SERVICE_NAME: kafka
+      CONNECT_PRODUCER_SECURITY_PROTOCOL: SASL_SSL
+      CONNECT_PRODUCER_SASL_JAAS_CONFIG: "com.sun.security.auth.module.Krb5LoginModule required \
+        useKeyTab=true \
+        storeKey=true \
+        keyTab=\"/var/lib/secret/kafka-connect.key\" \
+        principal=\"connect@TEST.CONFLUENT.IO\";"
+      # SSL Additions
+      CONNECT_PRODUCER_SSL_TRUSTSTORE_LOCATION: /etc/kafka/secrets/kafka.connect.truststore.jks
+      CONNECT_PRODUCER_SSL_TRUSTSTORE_PASSWORD: confluent
+      CONNECT_PRODUCER_SSL_KEYSTORE_LOCATION: /etc/kafka/secrets/kafka.connect.keystore.jks
+      CONNECT_PRODUCER_SSL_KEYSTORE_PASSWORD: confluent
+      CONNECT_PRODUCER_SSL_KEY_PASSWORD: confluent
+      # consumer
+      CONNECT_CONSUMER_SASL_MECHANISM: GSSAPI
+      CONNECT_CONSUMER_SASL_KERBEROS_SERVICE_NAME: kafka
+      CONNECT_CONSUMER_SECURITY_PROTOCOL: SASL_SSL
+      CONNECT_CONSUMER_SASL_JAAS_CONFIG: "com.sun.security.auth.module.Krb5LoginModule required \
+        useKeyTab=true \
+        storeKey=true \
+        keyTab=\"/var/lib/secret/kafka-connect.key\" \
+        principal=\"connect@TEST.CONFLUENT.IO\";"
+      # SSL Additions
+      CONNECT_CONSUMER_SSL_TRUSTSTORE_LOCATION: /etc/kafka/secrets/kafka.connect.truststore.jks
+      CONNECT_CONSUMER_SSL_TRUSTSTORE_PASSWORD: confluent
+      CONNECT_CONSUMER_SSL_KEYSTORE_LOCATION: /etc/kafka/secrets/kafka.connect.keystore.jks
+      CONNECT_CONSUMER_SSL_KEYSTORE_PASSWORD: confluent
+      CONNECT_CONSUMER_SSL_KEY_PASSWORD: confluent
+
+  schema-registry:
+    # Required to wait for the keytab to get generated
+    restart: on-failure
+    volumes:
+      - secret:/var/lib/secret
+      - ../../environment/ssl_kerberos/kdc/krb5.conf:/etc/krb5.conf
+      - ../../environment/ssl_kerberos/security:/etc/kafka/secrets
+    environment:
+      SCHEMA_REGISTRY_KAFKASTORE_SECURITY_PROTOCOL: SASL_SSL
+      SCHEMA_REGISTRY_KAFKASTORE_SASL_MECHANISM: GSSAPI
+      SCHEMA_REGISTRY_KAFKASTORE_SASL_KERBEROS_SERVICE_NAME: kafka
+      SCHEMA_REGISTRY_KAFKASTORE_SASL_JAAS_CONFIG: "com.sun.security.auth.module.Krb5LoginModule required \
+        useKeyTab=true \
+        storeKey=true \
+        keyTab=\"/var/lib/secret/kafka-schemaregistry.key\" \
+        principal=\"schemaregistry@TEST.CONFLUENT.IO\";"
+      # SSL Additions
+      SCHEMA_REGISTRY_KAFKASTORE_SSL_TRUSTSTORE_LOCATION: /etc/kafka/secrets/kafka.schema-registry.truststore.jks
+      SCHEMA_REGISTRY_KAFKASTORE_SSL_TRUSTSTORE_PASSWORD: confluent
+      SCHEMA_REGISTRY_KAFKASTORE_SSL_KEYSTORE_LOCATION: /etc/kafka/secrets/kafka.schema-registry.keystore.jks
+      SCHEMA_REGISTRY_KAFKASTORE_SSL_KEYSTORE_PASSWORD: confluent
+      SCHEMA_REGISTRY_KAFKASTORE_SSL_KEY_PASSWORD: confluent
+
+  ksqldb-server:
+    # Required to wait for the keytab to get generated
+    restart: on-failure
+    volumes:
+      - secret:/var/lib/secret
+      - ../../environment/ssl_kerberos/kdc/krb5.conf:/etc/krb5.conf
+      - ../../environment/ssl_kerberos/security:/etc/kafka/secrets
+    environment:
+      KSQL_SECURITY_PROTOCOL: SASL_SSL
+      KSQL_SASL_MECHANISM: GSSAPI
+      KSQL_SASL_KERBEROS_SERVICE_NAME: kafka
+      KSQL_SASL_JAAS_CONFIG: "com.sun.security.auth.module.Krb5LoginModule required \
+        useKeyTab=true \
+        storeKey=true \
+        keyTab=\"/var/lib/secret/kafka-ksqldb.key\" \
+        principal=\"ksqldb@TEST.CONFLUENT.IO\";"
+      # SSL Additions
+      KSQL_SSL_TRUSTSTORE_LOCATION: /etc/kafka/secrets/kafka.ksqldb-server.truststore.jks
+      KSQL_SSL_TRUSTSTORE_PASSWORD: confluent
+      KSQL_SSL_KEYSTORE_LOCATION: /etc/kafka/secrets/kafka.ksqldb-server.keystore.jks
+      KSQL_SSL_KEYSTORE_PASSWORD: confluent
+      KSQL_SSL_KEY_PASSWORD: confluent
+
+  control-center:
+    # Required to wait for the keytab to get generated
+    restart: on-failure
+    volumes:
+      - secret:/var/lib/secret
+      - ../../environment/ssl_kerberos/kdc/krb5.conf:/etc/krb5.conf
+      - ../../environment/ssl_kerberos/security:/etc/kafka/secrets
+    environment:
+      CONTROL_CENTER_STREAMS_SECURITY_PROTOCOL: SASL_SSL
+      CONTROL_CENTER_STREAMS_SASL_JAAS_CONFIG: "com.sun.security.auth.module.Krb5LoginModule required \
+        useKeyTab=true \
+        storeKey=true \
+        keyTab=\"/var/lib/secret/kafka-controlcenter.key\" \
+        principal=\"controlcenter@TEST.CONFLUENT.IO\";"
+      CONTROL_CENTER_STREAMS_SASL_MECHANISM: GSSAPI
+      CONTROL_CENTER_STREAMS_SASL_KERBEROS_SERVICE_NAME: kafka
+      # SSL Additions
+      CONTROL_CENTER_STREAMS_SSL_TRUSTSTORE_LOCATION: /etc/kafka/secrets/kafka.control-center.truststore.jks
+      CONTROL_CENTER_STREAMS_SSL_TRUSTSTORE_PASSWORD: confluent
+      CONTROL_CENTER_STREAMS_SSL_KEYSTORE_LOCATION: /etc/kafka/secrets/kafka.control-center.keystore.jks
+      CONTROL_CENTER_STREAMS_SSL_KEYSTORE_PASSWORD: confluent
+      CONTROL_CENTER_STREAMS_SSL_KEY_PASSWORD: confluent
+
+      CONTROL_CENTER_KAFKA_MYCLUSTER_SECURITY_PROTOCOL: SASL_SSL
+      CONTROL_CENTER_KAFKA_MYCLUSTER_SASL_JAAS_CONFIG: "com.sun.security.auth.module.Krb5LoginModule required \
+        useKeyTab=true \
+        storeKey=true \
+        keyTab=\"/var/lib/secret/kafka-controlcenter.key\" \
+        principal=\"controlcenter@TEST.CONFLUENT.IO\";"
+      CONTROL_CENTER_KAFKA_MYCLUSTER_SASL_MECHANISM: GSSAPI
+      CONTROL_CENTER_KAFKA_MYCLUSTER_SASL_KERBEROS_SERVICE_NAME: kafka
+      # SSL Additions
+      CONTROL_CENTER_KAFKA_MYCLUSTER_SSL_TRUSTSTORE_LOCATION: /etc/kafka/secrets/kafka.control-center.truststore.jks
+      CONTROL_CENTER_KAFKA_MYCLUSTER_SSL_TRUSTSTORE_PASSWORD: confluent
+      CONTROL_CENTER_KAFKA_MYCLUSTER_SSL_KEYSTORE_LOCATION: /etc/kafka/secrets/kafka.control-center.keystore.jks
+      CONTROL_CENTER_KAFKA_MYCLUSTER_SSL_KEYSTORE_PASSWORD: confluent
+      CONTROL_CENTER_KAFKA_MYCLUSTER_SSL_KEY_PASSWORD: confluent
+
+volumes:
+  secret: {}
+
+networks:
+  default:
+    name: kerberos-demo.local

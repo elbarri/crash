@@ -1,0 +1,15 @@
+# scripts to ignore
+confluent-generate-env-vars.sh
+01-create-table.sh
+# cp-ansible-playground
+upgrade-test.sh
+# https://github.com/vdesabou/kafka-docker-playground/issues/833 :
+cdc-oracle12-pdb-table-mtls-db-auth.sh
+cdc-oracle19-pdb-table-mtls-db-auth.sh
+# https://github.com/vdesabou/kafka-docker-playground/issues/920#issuecomment-830157555
+s3-sink-proxy-with-assuming-iam-role.sh
+# https://github.com/vdesabou/kafka-docker-playground/issues/920#issuecomment-830157555
+kinesis-proxy-with-assuming-iam-role.sh
+# see https://github.com/vdesabou/kafka-docker-playground/blob/master/other/ldap-authorizer-with-ldap-failover/README.md#using-dns-srv-records-with-ldap-over-tls
+start-ldaps.sh
+update_run.sh

@@ -1,0 +1,29 @@
+ARG TAG
+FROM vdesabou/kafka-docker-playground-connect:${TAG}
+
+# 4. Copy in required settings for client access to Kafka
+COPY consumer.properties /etc/kafka/consumer.properties
+COPY producer.properties /etc/kafka/producer.properties
+COPY command.properties /etc/kafka/command.properties
+COPY client.sasl.jaas.config /etc/kafka/client_jaas.conf
+
+#USER root
+#SHELL ["/bin/bash", "-c"]
+
+#RUN wget https://erlang.org/download/otp_src_24.2.tar.gz
+#RUN yum install -y gcc gcc-c++ glibc-devel make ncurses-devel openssl-devel autoconf java-1.8.0-openjdk-devel git && yum clean all
+#RUN tar zxvf otp_src_24.2.tar.gz
+#RUN cd otp_src_24.2 && ./otp_build autoconf && ./configure && make && make install
+
+#NV LANG en_US.UTF-8
+#ENV LANGUAGE en_US:en
+#ENV LC_ALL en_US.UTF-8
+
+#RUN git clone -b v1.12.2 --single-branch https://github.com/elixir-lang/elixir.git /opt/elixir
+
+#WORKDIR /opt/elixir
+#RUN make
+
+#ENV PATH=/opt/elixir/bin:$PATH
+
+CMD sleep infinity
